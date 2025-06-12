@@ -1,4 +1,4 @@
-# Project Name
+# ntfy React Client
 
 ## Description
 
@@ -8,7 +8,7 @@ Simple React client for sending and receiving ntfy notifications
 
 - React
 - Vite
-- Tailwind CSS (assuming from tailwind.config.js)
+- Tailwind CSS
 
 ## Setup and Installation
 

@@ -60,7 +60,15 @@ const ClickableMessage = ({ text }) => {
  */
 const App = () => {
     const [server, setServer] = useState('https://ntfy.sh');
-    const [topic, setTopic] = useState('your-topic-here');
+    const [topic, setTopic] = useState(() => {
+        try {
+            const storedTopic = localStorage.getItem('ntfy-latest-topic');
+            return storedTopic || 'your-topic-here';
+        } catch (error) {
+            console.error("Failed to load latest topic from localStorage", error);
+            return 'your-topic-here';
+        }
+    });
     const [messages, setMessages] = useState([]);
     const [newTitle, setNewTitle] = useState('');
     const [newMessage, setNewMessage] = useState('');
@@ -69,9 +77,33 @@ const App = () => {
     const [isGenerating, setIsGenerating] = useState(false);
     const [summary, setSummary] = useState('');
     const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+    const [previousTopics, setPreviousTopics] = useState(() => {
+        try {
+            const storedTopics = localStorage.getItem('ntfy-previous-topics');
+            return storedTopics ? JSON.parse(storedTopics) : [];
+        } catch (error) {
+            console.error("Failed to load previous topics from localStorage", error);
+            return [];
+        }
+    });
 
     // useRef to hold the AbortController for cancellable fetch requests.
     const abortControllerRef = useRef(null);
+
+    // Request notification permission on component mount
+    useEffect(() => {
+        if (!("Notification" in window)) {
+            console.warn("This browser does not support desktop notification");
+        } else if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") {
+                    console.log("Notification permission granted.");
+                } else {
+                    console.warn("Notification permission denied.");
+                }
+            });
+        }
+    }, []);
 
     /**
      * The `subscribe` function establishes a connection to the ntfy server
@@ -149,6 +181,15 @@ const App = () => {
                                 // Add new message and limit history to 50 messages.
                                 const newMessages = [parsedData, ...prevMessages].slice(0, 50);
                                 localStorage.setItem(`ntfy-history-${topic}`, JSON.stringify(newMessages));
+                                
+                                // Show desktop notification if permission is granted
+                                if (Notification.permission === "granted" && parsedData.message) {
+                                    const notificationTitle = parsedData.title || `New message on topic: ${topic}`;
+                                    new Notification(notificationTitle, {
+                                        body: parsedData.message,
+                                        icon: '/ntfy-logo.png' // Consider adding a logo in the public folder
+                                    });
+                                }
                                 return newMessages;
                             });
 
@@ -177,6 +218,33 @@ const App = () => {
             }
         };
     }, [subscribe]);
+
+    // Effect to save the current topic to localStorage and manage previous topics
+    useEffect(() => {
+        if (topic.trim()) {
+            // Save latest topic
+            localStorage.setItem('ntfy-latest-topic', topic.trim());
+
+            // Manage previous topics
+            setPreviousTopics(prevTopics => {
+                const newTopics = [topic.trim(), ...prevTopics.filter(t => t !== topic.trim())].slice(0, 10); // Keep last 10 topics
+                localStorage.setItem('ntfy-previous-topics', JSON.stringify(newTopics));
+                return newTopics;
+            });
+        }
+    }, [topic, setPreviousTopics]);
+
+    const handleTopicClick = (clickedTopic) => {
+        setTopic(clickedTopic);
+    };
+
+    const handleRemoveTopic = (topicToRemove) => {
+        setPreviousTopics(prevTopics => {
+            const newTopics = prevTopics.filter(topic => topic !== topicToRemove);
+            localStorage.setItem('ntfy-previous-topics', JSON.stringify(newTopics));
+            return newTopics;
+        });
+    };
     
     /**
      * Sends a notification to the current topic.
@@ -296,8 +364,33 @@ const App = () => {
                     <p className="text-gray-400 mt-2">Enhanced with Gemini AI ✨</p>
                 </header>
 
-                <div className="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+                <div id="messages" className="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+                    <div className="flex justify-between items-center mb-4">
+                         <h2 className="text-2xl font-semibold text-purple-300">Received Messages</h2>
+                         <button onClick={handleSummarize} disabled={messages.length === 0 || isGenerating} className="bg-teal-600 hover:bg-teal-500 text-white font-bold py-2 px-4 rounded-md transition duration-300 text-sm disabled:bg-gray-500 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                            {isGenerating ? '...' : '✨ Summarize'}
+                         </button>
+                    </div>
+                    <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
+                        {messages.length > 0 ? (
+                            messages.map((msg) => (
+                                <div key={msg.id} className="bg-gray-700 p-4 rounded-md shadow animate-fade-in">
+                                    <div className="flex justify-between items-center mb-2">
+                                        <span className="font-bold text-purple-400 break-all">{msg.title || 'No Title'}</span>
+                                        <span className="text-xs text-gray-400 flex-shrink-0 ml-2">{new Date(msg.time * 1000).toLocaleString()}</span>
+                                    </div>
+                                    <ClickableMessage text={msg.message} />
+                                    {msg.tags && msg.tags.length > 0 && (<div className="mt-2 flex flex-wrap gap-2">{msg.tags.map(tag => (<span key={tag} className="bg-gray-600 text-xs text-gray-300 px-2 py-1 rounded-full">{tag}</span>))}</div>)}
+                                </div>
+                            ))
+                        ) : (
+                            <p className="text-gray-400 text-center py-4">Waiting for notifications on topic: "{topic}"</p>
+                        )}
+                    </div>
+                </div>
+                <div id="settings" className="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        
                         <div>
                              <label htmlFor="server" className="block text-sm font-medium text-gray-300 mb-2">ntfy Server</label>
                              <input id="server" type="text" value={server} onChange={(e) => setServer(e.target.value)} className="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-purple-500 transition" placeholder="e.g., https://ntfy.sh" />
@@ -315,9 +408,34 @@ const App = () => {
                         </div>
                          <button onClick={handleClearMessages} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-md transition duration-300 text-sm">Clear Messages</button>
                     </div>
+
+                    {previousTopics.length > 0 && (
+                        <div className="mt-6">
+                            <h3 className="text-lg font-medium text-gray-300 mb-2">Previous Topics</h3>
+                            <div className="flex flex-wrap gap-2">
+                                {previousTopics.map((prevTopic, index) => (
+                                    <div key={index} className="flex items-center bg-gray-700 rounded-full pr-1">
+                                        <button
+                                            onClick={() => handleTopicClick(prevTopic)}
+                                            className="text-gray-200 text-sm px-3 py-1 transition duration-300"
+                                        >
+                                            {prevTopic}
+                                        </button>
+                                        <button
+                                            onClick={() => handleRemoveTopic(prevTopic)}
+                                            className="text-gray-400 hover:text-red-400 ml-1 p-1 rounded-full hover:bg-gray-600 transition duration-300"
+                                            aria-label={`Remove topic ${prevTopic}`}
+                                        >
+                                            &times;
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                <div className="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+                <div id="send" className="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
                     <h2 className="text-2xl font-semibold mb-4 text-purple-300">Send Notification</h2>
                     <div className="flex flex-col gap-4">
                          <input
@@ -343,30 +461,6 @@ const App = () => {
                     </div>
                 </div>
 
-                <div className="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <div className="flex justify-between items-center mb-4">
-                         <h2 className="text-2xl font-semibold text-purple-300">Received Messages</h2>
-                         <button onClick={handleSummarize} disabled={messages.length === 0 || isGenerating} className="bg-teal-600 hover:bg-teal-500 text-white font-bold py-2 px-4 rounded-md transition duration-300 text-sm disabled:bg-gray-500 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-                            {isGenerating ? '...' : '✨ Summarize'}
-                         </button>
-                    </div>
-                    <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
-                        {messages.length > 0 ? (
-                            messages.map((msg) => (
-                                <div key={msg.id} className="bg-gray-700 p-4 rounded-md shadow animate-fade-in">
-                                    <div className="flex justify-between items-center mb-2">
-                                        <span className="font-bold text-purple-400 break-all">{msg.title || 'No Title'}</span>
-                                        <span className="text-xs text-gray-400 flex-shrink-0 ml-2">{new Date(msg.time * 1000).toLocaleString()}</span>
-                                    </div>
-                                    <ClickableMessage text={msg.message} />
-                                    {msg.tags && msg.tags.length > 0 && (<div className="mt-2 flex flex-wrap gap-2">{msg.tags.map(tag => (<span key={tag} className="bg-gray-600 text-xs text-gray-300 px-2 py-1 rounded-full">{tag}</span>))}</div>)}
-                                </div>
-                            ))
-                        ) : (
-                            <p className="text-gray-400 text-center py-4">Waiting for notifications on topic: "{topic}"</p>
-                        )}
-                    </div>
-                </div>
             </div>
 
             {isSummaryModalOpen && (
